@@ -1,0 +1,140 @@
+netconvert --osm-files map.osm -o map.net.xml
+
+Now, copy the osmPolyconvert.typ.xml from the $SUMO_HOME/data/typemap/ and copy it to the folder where you put all the files. (MAP)
+
+
+$] polyconvert --osm-files map.osm --net-file map.net.xml --type-file osmPolyconvert.typ.xml -o map.poly.xml
+
+
+
+$] python $SUMO_HOME/tools/randomTrips.py -n map.net.xml -r map.rou.xml -e 100 -l
+
+Now, create a new file (to be named as map.sumo.cfg) and paste the following lines 
+
+ <configuration>
+     <input>
+         <net-file value="map.net.xml"/>
+<route-files value="map.rou.xml"/>
+         <additional-files value="map.poly.xml"/>
+     </input>
+<time>
+<begin value="0"/>
+<end value="100"/>
+<step-length value="0.1"/>
+</time>
+ </configuration>
+
+sumo-gui map.sumo.cfg 
+
+Step 3: Exporting to NS2
+from sumo trace to ns2, here is the step to do
+Open terminal and type the following commands,
+
+$] sumo -c map.sumo.cfg --fcd-output map.sumo.xml
+
+python /home/srivatsan/sumo-0.26.0/tools/traceExporter.py --fcd-input map.sumo.xml --ns2config-output map.tcl --ns2activity-output activity.tcl --ns2mobility-output mobility.tcl​
+
+
+
+$] python /home/srivatsan/sumo-0.26.0/tools/traceExporter.py --fcd-input map.sumo.xml --ns2config-output map.tcl --ns2activity-output activity.tcl --ns2mobility-output mobility.tcl​
+
+This will generate three tcl files (map.tcl, activity.tcl and mobility.tcl). Among this activity.tcl might not be needed, but mobility.tcl file is mandatory)
+
+The generated guindy.tcl have to be modified or altered as per the networking parameters like routing protocol, Mac layer, physical layer, link layer, etc.
+
+
+cd ns-allinone-2.34/ns-2.34/tcl/ex
+gedit simple-wireless.tcl
+
+
+MAP.TCL
+
+
+set val(chan)           Channel/WirelessChannel    ;# channel type
+set val(prop)           Propagation/TwoRayGround   ;# radio-propagation model
+set val(netif)          Phy/WirelessPhy            ;# network interface type
+set val(mac)            Mac/802_11                 ;# MAC type
+set val(ifq)            Queue/DropTail/PriQueue    ;# interface queue type
+set val(ll)             LL                         ;# link layer type
+set val(ant)            Antenna/OmniAntenna        ;# antenna model
+set val(ifqlen)         50                         ;# max packet in ifq
+set val(nn)             41                          ;# number of mobilenodes
+set val(rp)             AODV                      ;# routing protocol
+
+set opt(x) 5067
+set opt(y) 4960
+
+set ns_		[new Simulator]
+set tracefd     [open map.tr w]
+$ns_ trace-all $tracefd
+
+set namf [open map.nam w]
+$ns_ namtrace-all-wireless $namf $opt(x) $opt(y)
+
+# set up topography object
+set topo       [new Topography]
+
+$topo load_flatgrid $opt(x) $opt(y)
+
+#
+# Create God
+#
+create-god $val(nn)
+
+#
+#  Create the specified number of mobilenodes [$val(nn)] and "attach" them
+#  to the channel. 
+#  Here two nodes are created : node(0) and node(1)
+
+# configure node
+
+        $ns_ node-config -adhocRouting $val(rp) \
+			 -llType $val(ll) \
+			 -macType $val(mac) \
+			 -ifqType $val(ifq) \
+			 -ifqLen $val(ifqlen) \
+			 -antType $val(ant) \
+			 -propType $val(prop) \
+			 -phyType $val(netif) \
+			 -channelType $val(chan) \
+			 -topoInstance $topo \
+			 -agentTrace ON \
+			 -routerTrace ON \
+			 -macTrace OFF \
+			 -movementTrace ON			
+			 
+	for {set i 0} {$i < $val(nn) } {incr i} {
+		set node_($i) [$ns_ node]	
+		$node_($i) random-motion 0		;# disable random motion
+		$ns_ initial_node_pos $node_($i) 20
+	}
+
+source mobility.tcl​
+
+set tcp [new Agent/TCP]
+$tcp set class_ 2
+set sink [new Agent/TCPSink]
+$ns_ attach-agent $node_(0) $tcp
+$ns_ attach-agent $node_(22) $sink
+$ns_ connect $tcp $sink
+set ftp [new Application/FTP]
+$ftp attach-agent $tcp
+$ns_ at 10.0 "$ftp start" 
+
+#
+# Tell nodes when the simulation ends
+#
+for {set i 0} {$i < $val(nn) } {incr i} {
+    $ns_ at 100.0 "$node_($i) reset";
+}
+$ns_ at 100.0 "stop"
+$ns_ at 100.01 "puts \"NS EXITING...\" ; $ns_ halt"
+proc stop {} {
+    global ns_ tracefd
+    $ns_ flush-trace
+    close $tracefd
+}
+
+puts "Starting Simulation..."
+$ns_ run
+
